@@ -1,0 +1,728 @@
+---
+title: "Data Storytelling - Final Project"
+author: "Joey Clancy"
+date: "2/23/2022"
+output:
+  html_document:
+    code_download: yes
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r clear-environment, echo = FALSE}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+
+```
+
+# Data Preprocessing
+
+```{r load-packages, echo=FALSE, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(plotly)
+library(kableExtra)
+library(gridExtra)
+library(rpart)
+library(rpart.plot)
+library(gghighlight)
+library(knitr)
+```
+
+```{r}
+# Load Data
+weather <- read.csv("enchantWeather.csv")
+lotto <- read.csv("enchantLotto.csv")
+
+# Rename Day.of.Year column on lottery results set
+lotto <- rename(lotto, Day = Day.of.Year)
+
+# Merge data frames on Day column
+df = merge(x = lotto, y = weather, by = "Day")
+
+df$Preferred.Entry.Date <- as.Date(df$Preferred.Entry.Date, "%m/%d/%Y") #Convert to date type
+df$Result <- as.factor(df$Result) #Convert result to factor
+df$Preference.Order <- as.factor(df$Preference.Order) #Convert Preference.Order to factor
+df$Preferred.Division <- as.factor(df$Preferred.Division) #Convert Preferred.Division to factor
+df$ï..Table.Names <- NULL #Drop table name column
+
+df$resultBin <- ifelse(df$Result == "Accepted", 1, 0) # Create dummy variable for Result
+df$nwTrekConditions <- as.integer(ifelse(df$avgPrecipIn < 0.03 & df$avgTempMean > 52, 1, 0)) # Variable to indicate if both weather conditions are met
+df$Week <- strftime(df$Preferred.Entry.Date, format = "%V") # Create Week Variable
+df$Week <- as.integer(df$Week)  #Convert Week variable to integer instead of character
+```
+
+```{r}
+# Data summary
+summary(df)
+```
+
+```{r}
+# Data structure
+str(df)
+```
+
+```{r}
+# First 5 entries
+head(df)
+```
+
+# Univariate Graphical
+
+## UDFs
+
+```{r}
+barBox <- function(vbl) {
+  grid.arrange(
+    ggplot(data = df, mapping = aes(x = {{vbl}})) +
+      geom_bar() +
+      theme_minimal(),
+    
+    ggplot(data = df, mapping = aes(x = 0)) +
+      geom_boxplot(mapping = aes(y = {{vbl}})) +
+      coord_flip() +
+      theme_minimal()
+  )
+}
+```
+
+```{r}
+densityBox <- function(vbl) {
+  grid.arrange(
+    ggplot(data = df, mapping = aes(x = {{vbl}})) +
+      geom_density() +
+      theme_minimal(),
+    
+    ggplot(data = df, mapping = aes(x = 0)) +
+      geom_boxplot(mapping = aes(y = {{vbl}})) +
+      coord_flip() +
+      theme_minimal()
+  )
+}
+```
+
+## Minimum Acceptable Group Size
+
+```{r}
+barBox(Minimum.Acceptable.Group.Size)
+```
+
+## Maximum Requested Group Size
+
+```{r}
+barBox(Maximum.Requested.Group.Size)
+
+```
+
+## Day
+
+```{r}
+densityBox(Day)
+```
+
+## Week
+
+```{r}
+densityBox(Week)
+```
+
+
+## Average Precipitation (inches)
+
+```{r}
+densityBox(avgPrecipIn)
+```
+
+## Average Max Temperature (F)
+
+```{r}
+densityBox(avgTempMax)
+```
+
+## Average Mean Temperature (F)
+
+```{r}
+densityBox(avgTempMean)
+```
+
+## Average Min Temperature (F)
+
+```{r}
+densityBox(avgTempMin)
+```
+
+## Result
+
+```{r}
+df %>% 
+  ggplot(aes(x = Result)) +
+  geom_bar() +
+  theme_minimal()
+```
+
+# Multivariate Graphical
+
+## Average Precipitation
+
+```{r}
+precipDate <- df %>% 
+  filter(Preferred.Division == "Core Enchantment Zone") %>% 
+  group_by(Day) %>% 
+  summarise(averagePrecipitation = mean(avgPrecipIn)) %>% 
+  ggplot(aes(x = Day, y = averagePrecipitation, color = averagePrecipitation < 0.03)) +
+  geom_point() +
+  geom_vline(xintercept = c(182, 248), linetype='dashed') +
+  geom_hline(yintercept = 0.03, linetype="dashed") +
+  theme_classic() +
+  labs(title = "Average Precipitation Over Time",
+       subtitle = "Average precipitation bottoms out in the summer months",
+       x = "Day",
+       y = "Average Precipitation",
+       color = "Precipitation < 0.03 in")
+precipDate
+ggplotly(precipDate)
+```
+
+## Average Precipitation by Zone
+
+```{r}
+facetedPrecip <- df %>% 
+  group_by(Day, Preferred.Division, Result) %>% 
+  summarise(averagePrecipitation = mean(avgPrecipIn)) %>% 
+  ggplot(aes(x = Day, y = averagePrecipitation, color = Result)) +
+  geom_point(alpha=0.45, position = "jitter") +
+  facet_wrap(~ Preferred.Division) +
+  labs(title = "Average Precipitation by Zone",
+       subtitle = "Precipitation follows a similar pattern for all zones",
+       x = "Day of Year",
+       y = "Average Precipitation (inches)") +
+  theme_minimal()
+facetedPrecip
+ggplotly(facetedPrecip)
+```
+
+## Average Temperature
+
+```{r}
+tempDate <- df %>% 
+  filter(Preferred.Division == "Core Enchantment Zone") %>% 
+  group_by(Day) %>% 
+  summarise(averageTemperature = mean(avgTempMean)) %>% 
+  ggplot(aes(x = Day, y = averageTemperature, color = averageTemperature > 52)) +
+  geom_point() +
+  geom_hline(yintercept = 52, linetype="dashed") +
+  theme_classic() +
+  labs(title = "Average Temperature Over Time (Core Zone)",
+       subtitle = "Average temperature tops out in the summer months",
+       x = "Day",
+       y = "Average Temperature",
+       color = "Temperature > 52F")
+
+tempDate
+ggplotly(tempDate)
+```
+
+## Average Temperature by Zone
+
+```{r}
+facetedTemp <- df %>% 
+  group_by(Day, Preferred.Division, Result) %>% 
+  summarise(averageTemp = mean(avgTempMean)) %>% 
+  ggplot(aes(x = Day, y = averageTemp, color = Result)) +
+  geom_point(alpha=0.45, position = "jitter") +
+  facet_wrap(~ Preferred.Division) +
+  labs(title = "Average Temperature by Zone",
+       subtitle = "Temperature follows a similar pattern for all zones",
+       x = "Day of Year",
+       y = "Average Temperature (F)") +
+  theme_minimal()
+facetedTemp
+ggplotly(facetedTemp)
+```
+
+## Acceptance Rate
+
+```{r}
+# Create separate data frame containing ratios of accepted to unsuccessful
+resultRatio <- df %>% 
+ group_by(Preferred.Division, Result) %>%
+ summarize(N = n()) %>%
+ mutate(Ratio = round(N / sum(N), 2))
+```
+
+```{r}
+# Returns flipped column chart with top value highlighted
+avgAcceptance <- resultRatio %>%
+  filter(Result == "Accepted") %>% 
+  group_by(Preferred.Division) %>% 
+  summarise(avgAcceptance = mean(Ratio)) %>%  # Doesn't really do anything, as there's only one ratio for each group
+  ggplot(mapping = aes(fct_reorder(Preferred.Division, avgAcceptance), y = avgAcceptance*100)) +
+    geom_col() +
+  coord_flip() +
+  gghighlight(Preferred.Division == "Core Enchantment Zone") +
+  labs(title = "Acceptance Rate by Division",
+       subtitle = "Core Enchantment Zone had the lowest acceptance rate (about 1%)",
+       x = "Preferred Division",
+       y = "Average Acceptance (%)") +
+  theme_minimal()
+avgAcceptance
+ggplotly(avgAcceptance)
+```
+
+
+## NW Trek Conditions
+
+```{r}
+df %>% 
+  ggplot(aes(x = Day, y = nwTrekConditions)) +
+  geom_point() +
+  theme_minimal()
+```
+
+# Statistical EDA
+
+## Train Test Split
+ 
+```{r}
+dfSpec <- df[,c('Result', 'Day', 'Preferred.Division', 'Maximum.Requested.Group.Size')]
+
+set.seed(777)
+
+#Use 70% of dataset as training set and remaining 30% as testing set
+sample <- sample(c(TRUE, FALSE), nrow(dfSpec), replace=TRUE, prob=c(0.7,0.3))
+train <- dfSpec[sample, ]
+test <- dfSpec[!sample, ]  
+```
+
+## Dealing with class imbalances
+
+```{r}
+# Retrieve counts of accepted and unsuccessful applications
+table(train$Result)
+```
+
+
+```{r}
+# Over sampling
+library(ROSE)
+df_balanced_over <- ovun.sample(Result ~ Maximum.Requested.Group.Size + Day + Preferred.Division, data = train, method = "over", N=148726)$data
+table(df_balanced_over$Result)
+```
+
+```{r}
+# Under sampling
+df_balanced_under <- ovun.sample(Result ~ Maximum.Requested.Group.Size + Day + Preferred.Division, data = train, method = "under", N=3444)$data
+table(df_balanced_under$Result)
+```
+
+```{r}
+# Using both over and under sampling
+df_balanced_both <- ovun.sample(Result ~ Maximum.Requested.Group.Size + Day + Preferred.Division, data = train, method = "both", p=0.5, N=76085, seed = 1)$data
+table(df_balanced_both$Result)
+```
+
+```{r}
+# Synthetic data generation
+df.rose <- ROSE(Result ~ Maximum.Requested.Group.Size + Day + Preferred.Division, data = train, seed=1)$data
+
+table(df.rose$Result)
+```
+
+## Decision Trees
+
+```{r}
+tree.rose <- rpart(Result ~ ., 
+                   data = df.rose, 
+                   method = "class")
+
+tree.over <- rpart(Result ~ ., 
+                   data = df_balanced_over, 
+                   method = "class")
+
+
+tree.under <- rpart(Result ~ ., 
+                    data = df_balanced_under, 
+                    method = "class")
+
+tree.both <- rpart(Result ~ ., 
+                   data = df_balanced_both, 
+                   method = "class")
+
+```
+
+### Rose Data CM
+
+```{r}
+pred.tree.rose <- predict(tree.rose, newdata=test, type = "class")
+caret::confusionMatrix(pred.tree.rose, test$Result)
+#plotcp(tree.rose)
+```
+
+### Oversampled Data CM
+
+```{r}
+pred.tree.over <- predict(tree.over, newdata=test, type = "class")
+caret::confusionMatrix(pred.tree.over, test$Result)
+#plotcp(tree.over)
+```
+
+### Undersampled Data CM
+
+```{r}
+pred.tree.under <- predict(tree.under, newdata=test, type = "class")
+caret::confusionMatrix(pred.tree.under, test$Result)
+#plotcp(tree.under)
+```
+
+### Over & Under Data CM
+
+```{r}
+pred.tree.both <- predict(tree.both, newdata=test, type = "class")
+caret::confusionMatrix(pred.tree.both, test$Result)
+#plotcp(tree.both)
+```
+
+## Final Tree - Under & Over Sampling
+
+```{r}
+rpart.plot(tree.under)
+```
+
+**Notes on Acceptance Rates**
+
+- Before June 17th, probability of acceptance is **80%**
+
+- After October 5th, probability of acceptance rises to **85%**
+
+- Between October 5th and June 17th, acceptance rate is **27%**
+
+**Notes on Preferred Division and Group Size**
+
+- We find that maximum requested group size did not play an important role in estimating acceptance rates
+
+- Preferred division, however, is important. If you are wanting to be selected for either the Core Zone or Colchuck zone, your acceptance probability is *heavily* dependent on time of year.
+
+
+## Decision Tree - Optimal Time of Year (All Zones)
+
+**Note about trees:**
+
+Each node shows
+
+- the predicted class (weather conditions met or not),
+
+- the predicted probability of weather conditions being met,
+
+- the percentage of observations in the node
+
+```{r}
+set.seed(777)
+
+#Use 70% of dataset as training set and remaining 30% as testing set
+sample <- sample(c(TRUE, FALSE), nrow(df), replace=TRUE, prob=c(0.7,0.3))
+train <- df[sample, ]
+test <- df[!sample, ]  
+```
+
+
+```{r}
+tree <- rpart(nwTrekConditions ~ Day, train, method = "class")
+rpart.plot(tree)
+```
+
+```{r}
+# Get test set predictions
+tree.pred <- predict(tree, test, type = "class")
+
+# Build confusion matrix with caret package
+caret::confusionMatrix(as.factor(tree.pred), as.factor(test$nwTrekConditions))
+```
+
+```{r}
+# Retrieve complexity parameter or CP
+printcp(tree)
+```
+
+```{r}
+plotcp(tree)
+```
+
+**Notes**
+
+- The plotcp() function provides the cross validated error rate for various complexity parameter thresholds.
+
+- Ideally, you would expect the error to be very high for high values of cp, which will then gradually decrease before increasing again or flattening out (bias-variance trade-off).
+
+- Observed that the complexity parameter can remain at the defaul of 0.01 as adjusting it to 0.011 produces no noticeable effect on the model or the predictions
+
+## Decision Tree - Optimal Time of Year (Core Enchantment Zone)
+
+```{r}
+coreZoneDat <- df %>% 
+  filter(Preferred.Division == "Core Enchantment Zone")
+```
+
+
+```{r}
+set.seed(777)
+
+#Use 70% of dataset as training set and remaining 30% as testing set
+sampleCore <- sample(c(TRUE, FALSE), nrow(coreZoneDat), replace=TRUE, prob=c(0.7,0.3))
+trainCore <- coreZoneDat[sampleCore, ]
+testCore <- coreZoneDat[!sampleCore, ]  
+```
+
+```{r}
+treeCore <- rpart(nwTrekConditions ~ Day, trainCore, method = "class")
+rpart.plot(treeCore)
+```
+
+```{r}
+# Get test set predictions
+treeCore.pred <- predict(treeCore, testCore, type = "class")
+
+# Build confusion matrix with caret package
+caret::confusionMatrix(as.factor(treeCore.pred), as.factor(testCore$nwTrekConditions))
+```
+
+```{r}
+# Retrieve complexity parameter or CP
+printcp(treeCore)
+```
+
+```{r}
+plotcp(treeCore)
+```
+
+# Random Forests
+
+## RF - Original data
+
+```{r}
+library(randomForest)
+# fit random forest model
+rf_orig <- randomForest(
+  formula = Result ~ .,
+  data = train
+)
+
+rf_orig
+```
+
+```{r}
+pred.forest.orig <- predict(rf_orig, newdata = test)
+caret::confusionMatrix(pred.forest.orig, test$Result)
+```
+
+## On Synthetically Generated Data
+
+```{r}
+library(randomForest)
+```
+
+```{r}
+set.seed(1)
+
+# fit random forest model
+rf_rose <- randomForest(
+  formula = Result ~ .,
+  data = df.rose
+)
+
+rf_rose
+```
+
+```{r}
+which.min(rf_rose$err.rate)
+```
+
+```{r}
+# Find RMSE
+
+sqrt(rf_rose$err.rate[which.min(rf_rose$err.rate)]) 
+```
+
+```{r}
+plot(rf_rose)
+```
+
+```{r}
+varImpPlot(rf_rose)
+```
+
+**Notes**
+
+- The x-axis displays the average increase in node purity of the regression trees based on splitting on the various predictors displayed on the y-axis
+
+```{r}
+rf_rose_tuned <- tuneRF(
+               x=df.rose[,c(2,3,4)], #define predictor variables
+               y=df.rose$Result, #define response variable
+               ntreeTry=500,
+               mtryStart=3, 
+               stepFactor=1.5,
+               improve=0.01,
+               trace=FALSE #don't show real-time progress
+               )
+```
+
+```{r}
+pred.forest.rose <- predict(rf_rose, newdata = test)
+caret::confusionMatrix(pred.forest.rose, test$Result)
+```
+
+## Over and Undersampled Data
+
+```{r}
+# fit random forest model
+rf_both <- randomForest(
+  formula = Result ~ .,
+  data = df_balanced_both
+)
+
+rf_both
+```
+
+```{r}
+which.min(rf_both$err.rate)
+```
+
+```{r}
+# Find RMSE
+
+sqrt(rf_both$err.rate[which.min(rf_both$err.rate)]) 
+```
+
+```{r}
+plot(rf_both)
+```
+
+```{r}
+varImpPlot(rf_both)
+```
+
+```{r}
+rf_both_tuned <- tuneRF(
+               x=df_balanced_both[,c(2,3,4)], #define predictor variables
+               y=df_balanced_both$Result, #define response variable
+               ntreeTry=500,
+               mtryStart=3, 
+               stepFactor=1.5,
+               improve=0.01,
+               trace=FALSE #don't show real-time progress
+               )
+```
+
+```{r}
+pred.forest.both <- predict(rf_both, newdata = test)
+caret::confusionMatrix(pred.forest.both, test$Result)
+```
+
+## Undersampled Data
+
+```{r}
+# fit random forest model
+rf_under <- randomForest(
+  formula = Result ~ .,
+  data = df_balanced_under
+)
+
+rf_under
+```
+
+```{r}
+which.min(rf_under$err.rate)
+```
+
+```{r}
+# Find RMSE
+
+sqrt(rf_under$err.rate[which.min(rf_under$err.rate)]) 
+```
+
+```{r}
+plot(rf_under)
+```
+
+```{r}
+varImpPlot(rf_under)
+```
+
+```{r}
+rf_under_tuned <- tuneRF(
+               x=df_balanced_under[,c(2,3,4)], #define predictor variables
+               y=df_balanced_under$Result, #define response variable
+               ntreeTry=500,
+               mtryStart=3, 
+               stepFactor=1.5,
+               improve=0.01,
+               trace=FALSE #don't show real-time progress
+               )
+```
+
+```{r}
+pred.forest.under <- predict(rf_under, newdata = test)
+caret::confusionMatrix(pred.forest.under, test$Result)
+```
+
+## Oversampled Data
+
+```{r}
+# fit random forest model
+rf_over <- randomForest(
+  formula = Result ~ .,
+  data = df_balanced_over
+)
+
+rf_over
+```
+
+```{r}
+which.min(rf_over$err.rate)
+```
+
+```{r}
+# Find RMSE
+
+sqrt(rf_over$err.rate[which.min(rf_over$err.rate)]) 
+```
+
+```{r}
+varImpPlot(rf_over)
+```
+
+```{r}
+plot(rf_over)
+```
+
+```{r}
+rf_over_tuned <- tuneRF(
+               x=df_balanced_over[,c(2,3,4)], #define predictor variables
+               y=df_balanced_over$Result, #define response variable
+               ntreeTry=500,
+               mtryStart=3, 
+               stepFactor=1.5,
+               improve=0.01,
+               trace=FALSE #don't show real-time progress
+               )
+```
+
+```{r}
+pred.forest.over <- predict(rf_over, newdata = test)
+caret::confusionMatrix(pred.forest.over, test$Result)
+```
+
+# New Data Input - Test
+
+```{r}
+#define new observation
+new <- data.frame(Day=178, Preferred.Division="Snow Zone", Maximum.Requested.Group.Size=5)
+
+#use fitted bagged model to predict Ozone value of new observation
+predict(tree.under, newdata=new)
+```
+
